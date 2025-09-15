@@ -1,0 +1,1153 @@
+esphome:
+  name: marstek-ble-gateway
+  friendly_name: marstek-ble-gateway
+
+esp32:
+  board: esp32dev
+  framework:
+    type: esp-idf
+
+# Enable logging
+logger:
+  level: DEBUG
+
+# Enable Home Assistant API
+api:
+  encryption:
+    key: !secret api_key
+
+ota:
+  - platform: esphome
+    password: !secret ota_password
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+
+time:
+  - platform: homeassistant
+    id: ha_time
+
+esp32_ble_tracker:
+  scan_parameters:
+    active: true
+    interval: 320ms
+    window: 30ms
+  on_ble_advertise:
+    - then:
+        - lambda: |-
+            auto name = x.get_name();
+            if (!name.empty() && name.rfind("MST", 0) == 0) {
+              const std::string addr = x.address_str();
+              const bool mac_changed = (addr != id(discovered_marstek_mac));
+              if (mac_changed) {
+                id(discovered_marstek_mac) = addr;
+              }
+              // Ensure BLE client knows the correct address and type
+              if (id(marstek_venus_e).get_address() == 0ULL) {
+                id(marstek_venus_e).set_address(x.address_uint64());
+              }
+              id(marstek_venus_e).set_remote_addr_type(x.get_address_type());
+              // If not connected/connecting, trigger a connect now
+              // State access not exposed here; a best-effort call is fine, BLE client ignores duplicates
+              id(marstek_venus_e).connect();
+              // Throttle discovery logging: only on MAC change or every 10s
+              static uint32_t last_log = 0;
+              uint32_t now = millis();
+              if (mac_changed || (now - last_log) > 10000U) {
+                last_log = now;
+                ESP_LOGD("marstek", "Discovered Marstek device %s at %s", name.c_str(), addr.c_str());
+              }
+            }
+
+ble_client:
+  - mac_address: "00:00:00:00:00:00"  # TODO: set to your MST_* device MAC
+    id: marstek_venus_e
+    auto_connect: true
+    on_connect:
+      then:
+        - lambda: |-
+            id(connection_status) = true;
+            ESP_LOGI("marstek", "Connected to Marstek Venus E");
+            if (id(ha_time).now().is_valid()) {
+              auto n = id(ha_time).now();
+              char buf[32];
+              snprintf(buf, sizeof(buf), "%04d-%02d-%02d %02d:%02d:%02d", n.year, n.month, n.day_of_month, n.hour, n.minute, n.second);
+              id(ble_last_event).publish_state(std::string("Connected at ") + buf);
+            } else {
+              id(ble_last_event).publish_state("Connected");
+            }
+        # Kick off an initial safe read burst on connect
+        - delay: 300ms
+        - ble_client.ble_write:
+            id: marstek_venus_e
+            service_uuid: '0000ff00-0000-1000-8000-00805f9b34fb'
+            characteristic_uuid: '0000ff01-0000-1000-8000-00805f9b34fb'
+            value: !lambda |-
+              std::vector<uint8_t> frame{0x73,0x00,0x23,0x04};
+              frame[1] = (uint8_t)(frame.size()+1);
+              uint8_t x=0; for(auto c:frame) x^=c; frame.push_back(x);
+              return frame;
+        - delay: 300ms
+        - ble_client.ble_write:
+            id: marstek_venus_e
+            service_uuid: '0000ff00-0000-1000-8000-00805f9b34fb'
+            characteristic_uuid: '0000ff01-0000-1000-8000-00805f9b34fb'
+            value: !lambda |-
+              std::vector<uint8_t> frame{0x73,0x00,0x23,0x03};
+              frame[1] = (uint8_t)(frame.size()+1);
+              uint8_t x=0; for(auto c:frame) x^=c; frame.push_back(x);
+              return frame;
+        - delay: 300ms
+        - ble_client.ble_write:
+            id: marstek_venus_e
+            service_uuid: '0000ff00-0000-1000-8000-00805f9b34fb'
+            characteristic_uuid: '0000ff01-0000-1000-8000-00805f9b34fb'
+            value: !lambda |-
+              std::vector<uint8_t> frame{0x73,0x00,0x23,0x14};
+              frame[1] = (uint8_t)(frame.size()+1);
+              uint8_t x=0; for(auto c:frame) x^=c; frame.push_back(x);
+              return frame;
+    on_disconnect:
+      then:
+        - lambda: |-
+            id(connection_status) = false;
+            ESP_LOGW("marstek", "Disconnected from Marstek Venus E");
+            if (id(ha_time).now().is_valid()) {
+              auto n = id(ha_time).now();
+              char buf[32];
+              snprintf(buf, sizeof(buf), "%04d-%02d-%02d %02d:%02d:%02d", n.year, n.month, n.day_of_month, n.hour, n.minute, n.second);
+              id(ble_last_event).publish_state(std::string("Disconnected at ") + buf);
+            } else {
+              id(ble_last_event).publish_state("Disconnected");
+            }
+
+globals:
+  - id: connection_status
+    type: bool
+    initial_value: 'false'
+  - id: discovered_marstek_mac
+    type: std::string
+    initial_value: '"00:00:00:00:00:00"'
+  - id: notify_count
+    type: int
+    initial_value: '0'
+
+# Runtime Information sensors
+sensor:
+  - platform: template
+    name: "Marstek Input 1 Power"
+    id: in1_power
+    unit_of_measurement: "W"
+    device_class: power
+    state_class: measurement
+    update_interval: never
+    
+  - platform: template
+    name: "Marstek Input 2 Power"
+    id: in2_power
+    unit_of_measurement: "W"
+    device_class: power
+    state_class: measurement
+    update_interval: never
+    
+  - platform: template
+    name: "Marstek Output 1 Power"
+    id: out1_power
+    unit_of_measurement: "W"
+    device_class: power
+    state_class: measurement
+    update_interval: never
+    
+  - platform: template
+    name: "Marstek Output 2 Power"
+    id: out2_power
+    unit_of_measurement: "W"
+    device_class: power
+    state_class: measurement
+    update_interval: never
+    
+  - platform: template
+    name: "Marstek Temperature Low"
+    id: temp_low
+    unit_of_measurement: "°C"
+    device_class: temperature
+    state_class: measurement
+    update_interval: never
+    
+  - platform: template
+    name: "Marstek Temperature High"
+    id: temp_high
+    unit_of_measurement: "°C"
+    device_class: temperature
+    state_class: measurement
+    update_interval: never
+
+  # System data (0x0D)
+  - platform: template
+    name: "Marstek System Status"
+    id: system_status
+    state_class: measurement
+    entity_category: diagnostic
+    update_interval: never
+  - platform: template
+    name: "Marstek System Value 1"
+    id: system_value_1
+    state_class: measurement
+    entity_category: diagnostic
+    update_interval: never
+  - platform: template
+    name: "Marstek System Value 2"
+    id: system_value_2
+    state_class: measurement
+    entity_category: diagnostic
+    update_interval: never
+  - platform: template
+    name: "Marstek System Value 3"
+    id: system_value_3
+    state_class: measurement
+    entity_category: diagnostic
+    update_interval: never
+  - platform: template
+    name: "Marstek System Value 4"
+    id: system_value_4
+    state_class: measurement
+    entity_category: diagnostic
+    update_interval: never
+  - platform: template
+    name: "Marstek System Value 5"
+    id: system_value_5
+    state_class: measurement
+    entity_category: diagnostic
+    update_interval: never
+
+  # BMS Data sensors
+  - platform: template
+    name: "Marstek Battery Voltage"
+    id: battery_voltage
+    unit_of_measurement: "V"
+    device_class: voltage
+    state_class: measurement
+    update_interval: never
+    
+  - platform: template
+    name: "Marstek Battery Current"
+    id: battery_current
+    unit_of_measurement: "A"
+    device_class: current
+    state_class: measurement
+    update_interval: never
+    
+  - platform: template
+    name: "Marstek Battery SOC"
+    id: battery_soc
+    unit_of_measurement: "%"
+    device_class: battery
+    state_class: measurement
+    update_interval: never
+    
+  - platform: template
+    name: "Marstek Battery SOH"
+    id: battery_soh
+    unit_of_measurement: "%"
+    state_class: measurement
+    update_interval: never
+    
+  - platform: template
+    name: "Marstek Design Capacity"
+    id: design_capacity
+    unit_of_measurement: "Wh"
+    device_class: energy
+    state_class: measurement
+    update_interval: never
+    
+  - platform: template
+    name: "Marstek Battery Temperature"
+    id: battery_temp
+    unit_of_measurement: "°C"
+    device_class: temperature
+    state_class: measurement
+    update_interval: never
+
+  # Derived power for HA Energy Dashboard
+  - platform: template
+    name: "Marstek Battery Power"
+    id: battery_power
+    unit_of_measurement: "W"
+    device_class: power
+    state_class: measurement
+    lambda: |-
+      if (isnan(id(battery_voltage).state) || isnan(id(battery_current).state)) return NAN;
+      return id(battery_voltage).state * id(battery_current).state;
+    update_interval: never
+
+  # Split power flow for Energy Dashboard
+  - platform: template
+    name: "Marstek Battery Charge Power"
+    id: battery_charge_power
+    unit_of_measurement: "W"
+    device_class: power
+    state_class: measurement
+    lambda: |-
+      // Positive value when energy flows INTO the battery
+      if (isnan(id(battery_power).state)) return NAN;
+      float p = id(battery_power).state;
+      // Assumption: battery_power > 0 = discharging; < 0 = charging
+      return p < 0 ? -p : 0.0f;
+    update_interval: never
+
+  - platform: template
+    name: "Marstek Battery Discharge Power"
+    id: battery_discharge_power
+    unit_of_measurement: "W"
+    device_class: power
+    state_class: measurement
+    lambda: |-
+      // Positive value when energy flows OUT OF the battery
+      if (isnan(id(battery_power).state)) return NAN;
+      float p = id(battery_power).state;
+      // Assumption: battery_power > 0 = discharging; < 0 = charging
+      return p > 0 ? p : 0.0f;
+    update_interval: never
+
+  # Integrated energy for HA Energy Dashboard
+  - platform: integration
+    name: "Marstek Battery Energy In"
+    id: battery_energy_in
+    sensor: battery_charge_power
+    time_unit: h
+    unit_of_measurement: "Wh"
+    device_class: energy
+    state_class: total_increasing
+    restore: true
+
+  - platform: integration
+    name: "Marstek Battery Energy Out"
+    id: battery_energy_out
+    sensor: battery_discharge_power
+    time_unit: h
+    unit_of_measurement: "Wh"
+    device_class: energy
+    state_class: total_increasing
+    restore: true
+
+  # Cell voltages
+  - platform: template
+    name: "Marstek Cell 1 Voltage"
+    id: cell_1_voltage
+    unit_of_measurement: "V"
+    device_class: voltage
+    state_class: measurement
+    entity_category: diagnostic
+    update_interval: never
+    
+  - platform: template
+    name: "Marstek Cell 2 Voltage"
+    id: cell_2_voltage
+    unit_of_measurement: "V"
+    device_class: voltage
+    state_class: measurement
+    entity_category: diagnostic
+    update_interval: never
+    
+  - platform: template
+    name: "Marstek Cell 3 Voltage"
+    id: cell_3_voltage
+    unit_of_measurement: "V"
+    device_class: voltage
+    state_class: measurement
+    entity_category: diagnostic
+    update_interval: never
+    
+  - platform: template
+    name: "Marstek Cell 4 Voltage"
+    id: cell_4_voltage
+    unit_of_measurement: "V"
+    device_class: voltage
+    state_class: measurement
+    entity_category: diagnostic
+    update_interval: never
+
+  - platform: template
+    name: "Marstek Cell 5 Voltage"
+    id: cell_5_voltage
+    unit_of_measurement: "V"
+    device_class: voltage
+    state_class: measurement
+    entity_category: diagnostic
+    update_interval: never
+  - platform: template
+    name: "Marstek Cell 6 Voltage"
+    id: cell_6_voltage
+    unit_of_measurement: "V"
+    device_class: voltage
+    state_class: measurement
+    entity_category: diagnostic
+    update_interval: never
+  - platform: template
+    name: "Marstek Cell 7 Voltage"
+    id: cell_7_voltage
+    unit_of_measurement: "V"
+    device_class: voltage
+    state_class: measurement
+    entity_category: diagnostic
+    update_interval: never
+  - platform: template
+    name: "Marstek Cell 8 Voltage"
+    id: cell_8_voltage
+    unit_of_measurement: "V"
+    device_class: voltage
+    state_class: measurement
+    entity_category: diagnostic
+    update_interval: never
+  - platform: template
+    name: "Marstek Cell 9 Voltage"
+    id: cell_9_voltage
+    unit_of_measurement: "V"
+    device_class: voltage
+    state_class: measurement
+    entity_category: diagnostic
+    update_interval: never
+  - platform: template
+    name: "Marstek Cell 10 Voltage"
+    id: cell_10_voltage
+    unit_of_measurement: "V"
+    device_class: voltage
+    state_class: measurement
+    entity_category: diagnostic
+    update_interval: never
+  - platform: template
+    name: "Marstek Cell 11 Voltage"
+    id: cell_11_voltage
+    unit_of_measurement: "V"
+    device_class: voltage
+    state_class: measurement
+    entity_category: diagnostic
+    update_interval: never
+  - platform: template
+    name: "Marstek Cell 12 Voltage"
+    id: cell_12_voltage
+    unit_of_measurement: "V"
+    device_class: voltage
+    state_class: measurement
+    entity_category: diagnostic
+    update_interval: never
+  - platform: template
+    name: "Marstek Cell 13 Voltage"
+    id: cell_13_voltage
+    unit_of_measurement: "V"
+    device_class: voltage
+    state_class: measurement
+    entity_category: diagnostic
+    update_interval: never
+  - platform: template
+    name: "Marstek Cell 14 Voltage"
+    id: cell_14_voltage
+    unit_of_measurement: "V"
+    device_class: voltage
+    state_class: measurement
+    entity_category: diagnostic
+    update_interval: never
+  - platform: template
+    name: "Marstek Cell 15 Voltage"
+    id: cell_15_voltage
+    unit_of_measurement: "V"
+    device_class: voltage
+    state_class: measurement
+    entity_category: diagnostic
+    update_interval: never
+  - platform: template
+    name: "Marstek Cell 16 Voltage"
+    id: cell_16_voltage
+    unit_of_measurement: "V"
+    device_class: voltage
+    state_class: measurement
+    entity_category: diagnostic
+    update_interval: never
+
+  # BLE client RSSI for connection quality
+  - platform: ble_client
+    ble_client_id: marstek_venus_e
+    type: rssi
+    name: "Marstek BLE RSSI"
+    device_class: signal_strength
+    entity_category: diagnostic
+    update_interval: 5s
+
+# Additional numeric telemetry
+  - platform: template
+    name: "Marstek Config Mode"
+    id: config_mode
+    state_class: measurement
+    entity_category: diagnostic
+    update_interval: never
+  - platform: template
+    name: "Marstek Config Status"
+    id: config_status
+    state_class: measurement
+    entity_category: diagnostic
+    update_interval: never
+  - platform: template
+    name: "Marstek Config Value"
+    id: config_value
+    state_class: measurement
+    entity_category: diagnostic
+    update_interval: never
+  - platform: template
+    name: "Marstek CT Polling Rate"
+    id: ct_polling_rate
+    state_class: measurement
+    entity_category: diagnostic
+    update_interval: never
+
+binary_sensor:
+  - platform: template
+    name: "Marstek WiFi Connected"
+    id: wifi_connected
+    device_class: connectivity
+    entity_category: diagnostic
+    
+  - platform: template
+    name: "Marstek MQTT Connected"
+    id: mqtt_connected
+    device_class: connectivity
+    entity_category: diagnostic
+    
+  - platform: template
+    name: "Marstek BLE Connected"
+    id: ble_connected
+    device_class: connectivity
+    entity_category: diagnostic
+    lambda: return id(connection_status);
+
+text_sensor:
+  - platform: template
+    name: "Marstek Device Type"
+    id: device_type
+    entity_category: diagnostic
+    
+  - platform: template
+    name: "Marstek Device ID"
+    id: device_id
+    entity_category: diagnostic
+    
+  - platform: template
+    name: "Marstek MAC Address"
+    id: mac_address
+    entity_category: diagnostic
+    
+  - platform: template
+    name: "Marstek Firmware Version"
+    id: firmware_version
+    entity_category: diagnostic
+    
+  - platform: template
+    name: "Marstek WiFi SSID"
+    id: wifi_ssid
+    entity_category: diagnostic
+
+  - platform: template
+    name: "Discovered Marstek MAC"
+    id: discovered_mac_display
+    entity_category: diagnostic
+    lambda: |-
+      if (id(discovered_marstek_mac).length() > 10) {
+        return id(discovered_marstek_mac);
+      } else {
+        return {"Scanning..."};
+      }
+
+  - platform: template
+    name: "Marstek Network Info"
+    id: network_info
+    entity_category: diagnostic
+
+  - platform: template
+    name: "Marstek Meter IP"
+    id: meter_ip
+    entity_category: diagnostic
+
+  - platform: template
+    name: "Marstek Local API Status"
+    id: local_api_status
+    entity_category: diagnostic
+
+  - platform: template
+    name: "Marstek BLE Last Event"
+    id: ble_last_event
+    entity_category: diagnostic
+
+  # BLE notification subscriber (internal) – parses all incoming frames
+  - platform: ble_client
+    id: marstek_notify
+    internal: true
+    name: "Marstek Notify Raw"
+    ble_client_id: marstek_venus_e
+    service_uuid: '0000ff00-0000-1000-8000-00805f9b34fb'
+    characteristic_uuid: '0000ff02-0000-1000-8000-00805f9b34fb'
+    notify: true
+    on_notify:
+      then:
+        - lambda: |-
+            // Parse HM frame: [0x73][len][0x23][cmd][payload...][xor]
+            if (x.size() < 5) {
+              ESP_LOGW("marstek", "Notify too short (%d)", (int)x.size());
+              return;
+            }
+            const uint8_t* b = reinterpret_cast<const uint8_t*>(x.data());
+            ESP_LOGD("marstek", "Notify: len=%d, cmd=0x%02X", (int)x.size(), b[3]);
+            if (b[0] != 0x73 || b[2] != 0x23) {
+              ESP_LOGW("marstek", "Unexpected header: %02X %02X %02X", b[0], b[1], b[2]);
+              return;
+            }
+            const uint8_t cmd = b[3];
+            if (x.size() < 6) return;
+            const size_t payload_len = x.size() - 5; // exclude start & checksum
+            const uint8_t* p = b + 4;
+            // Helper lambdas
+            auto u8 = [&](size_t o){ return o < payload_len ? p[o] : 0; };
+            auto u16 = [&](size_t o){ if (o + 1 >= payload_len) return (uint16_t)0; return (uint16_t)(p[o] | (p[o+1] << 8)); };
+            auto s16 = [&](size_t o){ if (o + 1 >= payload_len) return (int16_t)0; return (int16_t)(p[o] | (p[o+1] << 8)); };
+            auto u32 = [&](size_t o){ if (o + 3 >= payload_len) return (uint32_t)0; return (uint32_t)(p[o] | (p[o+1] << 8) | (p[o+2] << 16) | (p[o+3] << 24)); };
+
+            // Count frames and update sensor (for visibility in HA)
+            id(notify_count) += 1;
+            if (id(ha_time).now().is_valid()) {
+              auto n = id(ha_time).now();
+              char tbuf[32];
+              snprintf(tbuf, sizeof(tbuf), "%02d:%02d:%02d", n.hour, n.minute, n.second);
+              ESP_LOGD("marstek", "Notify #%d at %s", id(notify_count), tbuf);
+            } else {
+              ESP_LOGD("marstek", "Notify #%d", id(notify_count));
+            }
+
+            switch (cmd) {
+              case 0x03: { // Runtime Info
+                id(in1_power).publish_state((float)u16(2));
+                id(in2_power).publish_state(((float)u16(4)) / 100.0f);
+                id(out1_power).publish_state((float)u16(20));
+                id(out2_power).publish_state(((float)u16(24)) / 10.0f);
+                id(temp_low).publish_state(((float)s16(33)) / 10.0f);
+                id(temp_high).publish_state(((float)s16(35)) / 10.0f);
+                id(wifi_connected).publish_state((u8(15) & 0x01) != 0);
+                id(mqtt_connected).publish_state((u8(15) & 0x02) != 0);
+                break;
+              }
+              case 0x04: { // Device Info (ASCII key=value)
+                std::string s((const char*)p, (size_t)payload_len);
+                auto apply_kv = [&](const std::string &k, const std::string &v){
+                  if (k == "type") id(device_type).publish_state(v);
+                  else if (k == "id") id(device_id).publish_state(v);
+                  else if (k == "mac") id(mac_address).publish_state(v);
+                  else if (k == "dev_ver" || k == "fc_ver") id(firmware_version).publish_state(v);
+                };
+                size_t start = 0;
+                while (start < s.size()) {
+                  size_t comma = s.find(',', start);
+                  auto pair = s.substr(start, comma == std::string::npos ? std::string::npos : comma - start);
+                  size_t eq = pair.find('=');
+                  if (eq != std::string::npos) {
+                    std::string key = pair.substr(0, eq);
+                    std::string val = pair.substr(eq + 1);
+                    auto trim = [](std::string &str){
+                      size_t i = 0; while (i < str.size() && (str[i] == ' ' || str[i] == '\t')) i++; str.erase(0, i);
+                      while (!str.empty() && (str.back() == ' ' || str.back() == '\t')) str.pop_back();
+                    };
+                    trim(key); trim(val);
+                    apply_kv(key, val);
+                  }
+                  if (comma == std::string::npos) break;
+                  start = comma + 1;
+                }
+                break;
+              }
+              case 0x08: { // WiFi SSID (ASCII)
+                std::string s((const char*)p, (size_t)payload_len);
+                id(wifi_ssid).publish_state(s);
+                break;
+              }
+              case 0x0D: { // System Data - publish raw words
+                id(system_status).publish_state(u8(0));
+                id(system_value_1).publish_state(u16(1));
+                id(system_value_2).publish_state(u16(3));
+                id(system_value_3).publish_state(u16(5));
+                id(system_value_4).publish_state(u16(7));
+                id(system_value_5).publish_state(u16(9));
+                break;
+              }
+              case 0x14: { // BMS Data
+                id(battery_soc).publish_state((float)u16(8));
+                id(battery_soh).publish_state((float)u16(10));
+                id(design_capacity).publish_state((float)u16(12));
+                float vbat = ((float)u16(14)) / 100.0f;
+                float ibat = ((float)s16(16)) / 10.0f;
+                id(battery_voltage).publish_state(vbat);
+                id(battery_current).publish_state(ibat);
+                if (!isnan(vbat) && !isnan(ibat)) {
+                  id(battery_power).publish_state(vbat * ibat);
+                }
+                id(battery_temp).publish_state((float)u16(40));
+                const int base = 48;
+                const int max_cells = 16;
+                for (int i = 0; i < max_cells; i++) {
+                  int off = base + i*2;
+                  if (off + 1 >= (int)payload_len) break;
+                  float v = ((float)u16(off)) / 1000.0f;
+                  switch (i) {
+                    case 0: id(cell_1_voltage).publish_state(v); break;
+                    case 1: id(cell_2_voltage).publish_state(v); break;
+                    case 2: id(cell_3_voltage).publish_state(v); break;
+                    case 3: id(cell_4_voltage).publish_state(v); break;
+                    case 4: id(cell_5_voltage).publish_state(v); break;
+                    case 5: id(cell_6_voltage).publish_state(v); break;
+                    case 6: id(cell_7_voltage).publish_state(v); break;
+                    case 7: id(cell_8_voltage).publish_state(v); break;
+                    case 8: id(cell_9_voltage).publish_state(v); break;
+                    case 9: id(cell_10_voltage).publish_state(v); break;
+                    case 10: id(cell_11_voltage).publish_state(v); break;
+                    case 11: id(cell_12_voltage).publish_state(v); break;
+                    case 12: id(cell_13_voltage).publish_state(v); break;
+                    case 13: id(cell_14_voltage).publish_state(v); break;
+                    case 14: id(cell_15_voltage).publish_state(v); break;
+                    case 15: id(cell_16_voltage).publish_state(v); break;
+                  }
+                }
+                break;
+              }
+              case 0x1A: { // Config Data (key bytes)
+                id(config_mode).publish_state(u8(0));
+                id(config_status).publish_state((int8_t)u8(4));
+                id(config_value).publish_state(u8(16));
+                break;
+              }
+              case 0x21: { // Meter IP (ASCII or 0xFF)
+                bool all_ff = true;
+                for (size_t i = 0; i < payload_len; i++) if (p[i] != 0xFF) { all_ff = false; break; }
+                if (all_ff) id(meter_ip).publish_state("(not set)");
+                else {
+                  std::string ip;
+                  ip.reserve(payload_len);
+                  for (size_t i = 0; i < payload_len; i++) {
+                    if (p[i] != 0x00) ip.push_back((char)p[i]);
+                  }
+                  id(meter_ip).publish_state(ip);
+                }
+                break;
+              }
+              case 0x24: { // Network Info (ASCII)
+                std::string s((const char*)p, (size_t)payload_len);
+                id(network_info).publish_state(s);
+                break;
+              }
+              case 0x28: { // Local API status [enabled, port_lo, port_hi]
+                char buf[32];
+                uint16_t port = u16(1);
+                snprintf(buf, sizeof(buf), "%s/%u", (u8(0)==1?"enabled":"disabled"), (unsigned)port);
+                id(local_api_status).publish_state(std::string(buf));
+                break;
+              }
+              case 0x22: { // CT polling rate (read/echo)
+                id(ct_polling_rate).publish_state((int)u8(0));
+                break;
+              }
+              default:
+                ESP_LOGD("marstek", "Unhandled cmd 0x%02X (%d bytes)", cmd, (int)payload_len);
+            }
+
+# Power Management Controls
+button:
+  - platform: template
+    name: "Marstek Set 800W Mode"
+    id: set_800w_mode
+    entity_category: config
+    on_press:
+      - if:
+          condition:
+            lambda: 'return id(connection_status);'
+          then:
+            - ble_client.ble_write:
+                id: marstek_venus_e
+                service_uuid: '0000ff00-0000-1000-8000-00805f9b34fb'
+                characteristic_uuid: '0000ff01-0000-1000-8000-00805f9b34fb'
+                value: !lambda |-
+                  std::vector<uint8_t> frame{0x73,0x00,0x23,0x15,0x20,0x03};
+                  frame[1] = (uint8_t)(frame.size()+1);
+                  uint8_t checksum=0; for(auto c:frame) checksum^=c; frame.push_back(checksum);
+                  return frame;
+          else:
+            - logger.log: "Cannot send power command - device not connected"
+
+  - platform: template
+    name: "Marstek Set 2500W Mode"
+    id: set_2500w_mode
+    entity_category: config
+    on_press:
+      - if:
+          condition:
+            lambda: 'return id(connection_status);'
+          then:
+            - ble_client.ble_write:
+                id: marstek_venus_e
+                service_uuid: '0000ff00-0000-1000-8000-00805f9b34fb'
+                characteristic_uuid: '0000ff01-0000-1000-8000-00805f9b34fb'
+                value: !lambda |-
+                  std::vector<uint8_t> frame{0x73,0x00,0x23,0x15,0xC4,0x09};
+                  frame[1] = (uint8_t)(frame.size()+1);
+                  uint8_t checksum=0; for(auto c:frame) checksum^=c; frame.push_back(checksum);
+                  return frame;
+          else:
+            - logger.log: "Cannot send power command - device not connected"
+
+  - platform: template
+    name: "Marstek Set AC Power 2500W"
+    id: set_ac_power_2500w
+    entity_category: config
+    on_press:
+      - ble_client.ble_write:
+          id: marstek_venus_e
+          service_uuid: '0000ff00-0000-1000-8000-00805f9b34fb'
+          characteristic_uuid: '0000ff01-0000-1000-8000-00805f9b34fb'
+          value: !lambda |-
+            std::vector<uint8_t> frame{0x73,0x00,0x23,0x16,0xC4,0x09};
+            frame[1] = (uint8_t)(frame.size()+1);
+            uint8_t x=0; for(auto c:frame) x^=c; frame.push_back(x);
+            return frame;
+
+  - platform: template
+    name: "Marstek Set Total Power 2500W"
+    id: set_total_power_2500w
+    entity_category: config
+    on_press:
+      - ble_client.ble_write:
+          id: marstek_venus_e
+          service_uuid: '0000ff00-0000-1000-8000-00805f9b34fb'
+          characteristic_uuid: '0000ff01-0000-1000-8000-00805f9b34fb'
+          value: !lambda |-
+            std::vector<uint8_t> frame{0x73,0x00,0x23,0x17,0xC4,0x09};
+            frame[1] = (uint8_t)(frame.size()+1);
+            uint8_t checksum=0; for(auto c:frame) checksum^=c; frame.push_back(checksum);
+            return frame;
+
+# System Control Switches  
+switch:
+  - platform: template
+    name: "Marstek EPS Mode"
+    id: eps_mode
+    entity_category: config
+    optimistic: true
+    lambda: |-
+      return {};  // Unknown state initially
+    turn_on_action:
+      - if:
+          condition:
+            lambda: 'return id(connection_status);'
+          then:
+            - ble_client.ble_write:
+                id: marstek_venus_e
+                service_uuid: '0000ff00-0000-1000-8000-00805f9b34fb'
+                characteristic_uuid: '0000ff01-0000-1000-8000-00805f9b34fb'
+                value: !lambda |-
+                  std::vector<uint8_t> frame{0x73,0x00,0x23,0x05,0x01};
+                  frame[1] = (uint8_t)(frame.size()+1);
+                  uint8_t checksum=0; for(auto c:frame) checksum^=c; frame.push_back(checksum);
+                  return frame;
+          else:
+            - logger.log: "Cannot send EPS command - device not connected"
+    turn_off_action:
+      - if:
+          condition:
+            lambda: 'return id(connection_status);'
+          then:
+            - ble_client.ble_write:
+                id: marstek_venus_e
+                service_uuid: '0000ff00-0000-1000-8000-00805f9b34fb'
+                characteristic_uuid: '0000ff01-0000-1000-8000-00805f9b34fb'
+                value: !lambda |-
+                  std::vector<uint8_t> frame{0x73,0x00,0x23,0x05,0x00};
+                  frame[1] = (uint8_t)(frame.size()+1);
+                  uint8_t checksum=0; for(auto c:frame) checksum^=c; frame.push_back(checksum);
+                  return frame;
+          else:
+            - logger.log: "Cannot send EPS command - device not connected"
+
+  - platform: template
+    name: "Marstek AC Input"
+    id: ac_input
+    entity_category: config
+    turn_on_action:
+      - ble_client.ble_write:
+          id: marstek_venus_e
+          service_uuid: '0000ff00-0000-1000-8000-00805f9b34fb'
+          characteristic_uuid: '0000ff01-0000-1000-8000-00805f9b34fb'
+          value: !lambda |-
+            std::vector<uint8_t> frame{0x73,0x00,0x23,0x06,0x01};
+            frame[1] = (uint8_t)(frame.size()+1);
+            uint8_t x=0; for(auto c:frame) x^=c; frame.push_back(x);
+            return frame;
+    turn_off_action:
+      - ble_client.ble_write:
+          id: marstek_venus_e
+          service_uuid: '0000ff00-0000-1000-8000-00805f9b34fb'
+          characteristic_uuid: '0000ff01-0000-1000-8000-00805f9b34fb'
+          value: !lambda |-
+            std::vector<uint8_t> frame{0x73,0x00,0x23,0x06,0x00};
+            frame[1] = (uint8_t)(frame.size()+1);
+            uint8_t x=0; for(auto c:frame) x^=c; frame.push_back(x);
+            return frame;
+
+  - platform: template
+    name: "Marstek Generator"
+    id: generator
+    entity_category: config
+    turn_on_action:
+      - ble_client.ble_write:
+          id: marstek_venus_e
+          service_uuid: '0000ff00-0000-1000-8000-00805f9b34fb'
+          characteristic_uuid: '0000ff01-0000-1000-8000-00805f9b34fb'
+          value: !lambda |-
+            std::vector<uint8_t> frame{0x73,0x00,0x23,0x07,0x01};
+            frame[1] = (uint8_t)(frame.size()+1);
+            uint8_t x=0; for(auto c:frame) x^=c; frame.push_back(x);
+            return frame;
+    turn_off_action:
+      - ble_client.ble_write:
+          id: marstek_venus_e
+          service_uuid: '0000ff00-0000-1000-8000-00805f9b34fb'
+          characteristic_uuid: '0000ff01-0000-1000-8000-00805f9b34fb'
+          value: !lambda |-
+            std::vector<uint8_t> frame{0x73,0x00,0x23,0x07,0x00};
+            frame[1] = (uint8_t)(frame.size()+1);
+            uint8_t x=0; for(auto c:frame) x^=c; frame.push_back(x);
+            return frame;
+
+  - platform: template
+    name: "Marstek Buzzer"
+    id: buzzer
+    entity_category: config
+    turn_on_action:
+      - ble_client.ble_write:
+          id: marstek_venus_e
+          service_uuid: '0000ff00-0000-1000-8000-00805f9b34fb'
+          characteristic_uuid: '0000ff01-0000-1000-8000-00805f9b34fb'
+          value: !lambda |-
+            std::vector<uint8_t> frame{0x73,0x00,0x23,0x09,0x01};
+            frame[1] = (uint8_t)(frame.size()+1);
+            uint8_t x=0; for(auto c:frame) x^=c; frame.push_back(x);
+            return frame;
+    turn_off_action:
+      - ble_client.ble_write:
+          id: marstek_venus_e
+          service_uuid: '0000ff00-0000-1000-8000-00805f9b34fb'
+          characteristic_uuid: '0000ff01-0000-1000-8000-00805f9b34fb'
+          value: !lambda |-
+            std::vector<uint8_t> frame{0x73,0x00,0x23,0x09,0x00};
+            frame[1] = (uint8_t)(frame.size()+1);
+            uint8_t x=0; for(auto c:frame) x^=c; frame.push_back(x);
+            return frame;
+
+# Configuration Selects
+select:
+  - platform: template
+    name: "Marstek CT Polling Rate"
+    id: ct_polling_rate_select
+    entity_category: config
+    options:
+      - "Fastest (0)"
+      - "Medium (1)" 
+      - "Slowest (2)"
+    initial_option: "Medium (1)"
+    set_action:
+      - if:
+          condition:
+            lambda: 'return x == "Fastest (0)";'
+          then:
+            - ble_client.ble_write:
+                id: marstek_venus_e
+                service_uuid: '0000ff00-0000-1000-8000-00805f9b34fb'
+                characteristic_uuid: '0000ff01-0000-1000-8000-00805f9b34fb'
+                value: !lambda |-
+                  std::vector<uint8_t> frame{0x73,0x00,0x23,0x20,0x00};
+                  frame[1] = (uint8_t)(frame.size()+1);
+                  uint8_t checksum=0; for(auto c:frame) checksum^=c; frame.push_back(checksum);
+                  return frame;
+      - if:
+          condition:
+            lambda: 'return x == "Medium (1)";'
+          then:
+            - ble_client.ble_write:
+                id: marstek_venus_e
+                service_uuid: '0000ff00-0000-1000-8000-00805f9b34fb'
+                characteristic_uuid: '0000ff01-0000-1000-8000-00805f9b34fb'
+                value: !lambda |-
+                  std::vector<uint8_t> frame{0x73,0x00,0x23,0x20,0x01};
+                  frame[1] = (uint8_t)(frame.size()+1);
+                  uint8_t checksum=0; for(auto c:frame) checksum^=c; frame.push_back(checksum);
+                  return frame;
+      - if:
+          condition:
+            lambda: 'return x == "Slowest (2)";'
+          then:
+            - ble_client.ble_write:
+                id: marstek_venus_e
+                service_uuid: '0000ff00-0000-1000-8000-00805f9b34fb'
+                characteristic_uuid: '0000ff01-0000-1000-8000-00805f9b34fb'
+                value: !lambda |-
+                  std::vector<uint8_t> frame{0x73,0x00,0x23,0x20,0x02};
+                  frame[1] = (uint8_t)(frame.size()+1);
+                  uint8_t checksum=0; for(auto c:frame) checksum^=c; frame.push_back(checksum);
+                  return frame;
+
+# Timed polling and watchdogs
+interval:
+  # Fast loop: Runtime + BMS
+  - interval: 10s
+    then:
+      - if:
+          condition:
+            lambda: 'return id(connection_status);'
+          then:
+            - ble_client.ble_write:
+                id: marstek_venus_e
+                service_uuid: '0000ff00-0000-1000-8000-00805f9b34fb'
+                characteristic_uuid: '0000ff01-0000-1000-8000-00805f9b34fb'
+                value: !lambda |-
+                  std::vector<uint8_t> frame{0x73,0x00,0x23,0x03};
+                  frame[1] = (uint8_t)(frame.size()+1);
+                  uint8_t x=0; for(auto c:frame) x^=c; frame.push_back(x);
+                  return frame;
+            - delay: 400ms
+            - ble_client.ble_write:
+                id: marstek_venus_e
+                service_uuid: '0000ff00-0000-1000-8000-00805f9b34fb'
+                characteristic_uuid: '0000ff01-0000-1000-8000-00805f9b34fb'
+                value: !lambda |-
+                  std::vector<uint8_t> frame{0x73,0x00,0x23,0x14};
+                  frame[1] = (uint8_t)(frame.size()+1);
+                  uint8_t x=0; for(auto c:frame) x^=c; frame.push_back(x);
+                  return frame;
+          else:
+            - lambda: |-
+                ESP_LOGD("marstek", "Not connected; skipping fast poll");
+
+  # Medium loop: System, WiFi, Config, CT Poll, Local API, Network, Meter IP
+  - interval: 60s
+    then:
+      - if:
+          condition:
+            lambda: 'return id(connection_status);'
+          then:
+            - ble_client.ble_write:
+                id: marstek_venus_e
+                service_uuid: '0000ff00-0000-1000-8000-00805f9b34fb'
+                characteristic_uuid: '0000ff01-0000-1000-8000-00805f9b34fb'
+                value: !lambda |-
+                  std::vector<uint8_t> frame{0x73,0x00,0x23,0x0D};
+                  frame[1] = (uint8_t)(frame.size()+1);
+                  uint8_t x=0; for(auto c:frame) x^=c; frame.push_back(x);
+                  return frame;
+            - delay: 300ms
+            - ble_client.ble_write:
+                id: marstek_venus_e
+                service_uuid: '0000ff00-0000-1000-8000-00805f9b34fb'
+                characteristic_uuid: '0000ff01-0000-1000-8000-00805f9b34fb'
+                value: !lambda |-
+                  std::vector<uint8_t> frame{0x73,0x00,0x23,0x08};
+                  frame[1] = (uint8_t)(frame.size()+1);
+                  uint8_t x=0; for(auto c:frame) x^=c; frame.push_back(x);
+                  return frame;
+            - delay: 300ms
+            - ble_client.ble_write:
+                id: marstek_venus_e
+                service_uuid: '0000ff00-0000-1000-8000-00805f9b34fb'
+                characteristic_uuid: '0000ff01-0000-1000-8000-00805f9b34fb'
+                value: !lambda |-
+                  std::vector<uint8_t> frame{0x73,0x00,0x23,0x1A};
+                  frame[1] = (uint8_t)(frame.size()+1);
+                  uint8_t x=0; for(auto c:frame) x^=c; frame.push_back(x);
+                  return frame;
+            - delay: 300ms
+            - ble_client.ble_write:
+                id: marstek_venus_e
+                service_uuid: '0000ff00-0000-1000-8000-00805f9b34fb'
+                characteristic_uuid: '0000ff01-0000-1000-8000-00805f9b34fb'
+                value: !lambda |-
+                  std::vector<uint8_t> frame{0x73,0x00,0x23,0x22};
+                  frame[1] = (uint8_t)(frame.size()+1);
+                  uint8_t x=0; for(auto c:frame) x^=c; frame.push_back(x);
+                  return frame;
+            - delay: 300ms
+            - ble_client.ble_write:
+                id: marstek_venus_e
+                service_uuid: '0000ff00-0000-1000-8000-00805f9b34fb'
+                characteristic_uuid: '0000ff01-0000-1000-8000-00805f9b34fb'
+                value: !lambda |-
+                  std::vector<uint8_t> frame{0x73,0x00,0x23,0x28};
+                  frame[1] = (uint8_t)(frame.size()+1);
+                  uint8_t x=0; for(auto c:frame) x^=c; frame.push_back(x);
+                  return frame;
+            - delay: 300ms
+            - ble_client.ble_write:
+                id: marstek_venus_e
+                service_uuid: '0000ff00-0000-1000-8000-00805f9b34fb'
+                characteristic_uuid: '0000ff01-0000-1000-8000-00805f9b34fb'
+                value: !lambda |-
+                  std::vector<uint8_t> frame{0x73,0x00,0x23,0x21,0x0B};
+                  frame[1] = (uint8_t)(frame.size()+1);
+                  uint8_t x=0; for(auto c:frame) x^=c; frame.push_back(x);
+                  return frame;
+            - delay: 300ms
+            - ble_client.ble_write:
+                id: marstek_venus_e
+                service_uuid: '0000ff00-0000-1000-8000-00805f9b34fb'
+                characteristic_uuid: '0000ff01-0000-1000-8000-00805f9b34fb'
+                value: !lambda |-
+                  std::vector<uint8_t> frame{0x73,0x00,0x23,0x24};
+                  frame[1] = (uint8_t)(frame.size()+1);
+                  uint8_t x=0; for(auto c:frame) x^=c; frame.push_back(x);
+                  return frame;
+          else:
+            - lambda: |-
+                ESP_LOGD("marstek", "Not connected; skipping medium poll");
+
+  # Slow loop: Error & Event logs
+  - interval: 5min
+    then:
+      - if:
+          condition:
+            lambda: 'return id(connection_status);'
+          then:
+            - ble_client.ble_write:
+                id: marstek_venus_e
+                service_uuid: '0000ff00-0000-1000-8000-00805f9b34fb'
+                characteristic_uuid: '0000ff01-0000-1000-8000-00805f9b34fb'
+                value: !lambda |-
+                  std::vector<uint8_t> frame{0x73,0x00,0x23,0x13};
+                  frame[1] = (uint8_t)(frame.size()+1);
+                  uint8_t x=0; for(auto c:frame) x^=c; frame.push_back(x);
+                  return frame;
+            - delay: 300ms
+            - ble_client.ble_write:
+                id: marstek_venus_e
+                service_uuid: '0000ff00-0000-1000-8000-00805f9b34fb'
+                characteristic_uuid: '0000ff01-0000-1000-8000-00805f9b34fb'
+                value: !lambda |-
+                  std::vector<uint8_t> frame{0x73,0x00,0x23,0x1C};
+                  frame[1] = (uint8_t)(frame.size()+1);
+                  uint8_t x=0; for(auto c:frame) x^=c; frame.push_back(x);
+                  return frame;
+          else:
+            - lambda: |-
+                ESP_LOGD("marstek", "Not connected; skipping slow poll");
+
+  # Watchdog: try to connect if disconnected
+  - interval: 15s
+    then:
+      - if:
+          condition:
+            lambda: 'return !id(connection_status);'
+          then:
+            - logger.log:
+                level: DEBUG
+                format: "Watchdog: attempting BLE connect"
+            - ble_client.connect:
+                id: marstek_venus_e
