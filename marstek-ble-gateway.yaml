@@ -252,7 +252,7 @@ sensor:
       // Calculate available capacity: (100 - SOC)% × design_capacity
       if (isnan(id(battery_soc).state) || isnan(id(design_capacity).state)) return NAN;
       return ((100.0f - id(battery_soc).state) / 100.0f) * id(design_capacity).state;
-    update_interval: never
+    update_interval: 60s
     
   - platform: template
     name: "Remaining Capacity"
@@ -264,7 +264,7 @@ sensor:
       // Calculate remaining capacity: SOC% × design_capacity
       if (isnan(id(battery_soc).state) || isnan(id(design_capacity).state)) return NAN;
       return (id(battery_soc).state / 100.0f) * id(design_capacity).state;
-    update_interval: never
+    update_interval: 60s
     
   # Daily Energy Tracking (ESPHome calculated)
   - platform: total_daily_energy
