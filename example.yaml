@@ -1,0 +1,48 @@
+# Example ESPHome configuration using the Marstek BLE Gateway package
+# 
+# This shows how to integrate the Marstek BLE Gateway into your own ESP32 device
+
+esphome:
+  name: my-marstek-gateway
+  friendly_name: My Marstek Gateway
+
+esp32:
+  board: esp32-s3-devkitc-1
+  variant: esp32s3
+  framework:
+    type: esp-idf
+
+# Enable logging
+logger:
+  level: INFO
+
+# Enable Home Assistant API
+api:
+  encryption:
+    key: "YOUR_32_BYTE_BASE64_ENCRYPTION_KEY_HERE"
+
+ota:
+  - platform: esphome
+    password: "YOUR_OTA_PASSWORD_HERE"
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+
+# Time component - REQUIRED for the Marstek package timestamps
+time:
+  - platform: homeassistant
+    id: ha_time
+
+# Import the Marstek BLE Gateway package
+packages:
+  marstek_ble: github://jaapp/marstek-ble-gateway/marstek-ble-gateway.yaml@main
+
+# Optional: You can add your own additional sensors/components here
+# sensor:
+#   - platform: template
+#     name: "My Custom Sensor"
+#     lambda: |-
+#       // Example: Calculate battery efficiency
+#       if (isnan(id(battery_power).state) || isnan(id(remaining_capacity).state)) return NAN;
+#       return id(remaining_capacity).state / 1000.0f; // Convert Wh to kWh
