@@ -250,8 +250,16 @@ sensor:
     state_class: measurement
     lambda: |-
       // Calculate available capacity: (100 - SOC)% × design_capacity
-      if (isnan(id(battery_soc).state) || isnan(id(design_capacity).state)) return NAN;
-      return ((100.0f - id(battery_soc).state) / 100.0f) * id(design_capacity).state;
+      float soc = id(battery_soc).state;
+      float design = id(design_capacity).state;
+      ESP_LOGD("capacity", "Available calc: SOC=%.1f, Design=%.1f", soc, design);
+      if (isnan(soc) || isnan(design)) {
+        ESP_LOGW("capacity", "Available capacity: NAN values detected");
+        return NAN;
+      }
+      float result = ((100.0f - soc) / 100.0f) * design;
+      ESP_LOGD("capacity", "Available capacity calculated: %.1f Wh", result);
+      return result;
     update_interval: 60s
     
   - platform: template
@@ -262,8 +270,16 @@ sensor:
     state_class: measurement
     lambda: |-
       // Calculate remaining capacity: SOC% × design_capacity
-      if (isnan(id(battery_soc).state) || isnan(id(design_capacity).state)) return NAN;
-      return (id(battery_soc).state / 100.0f) * id(design_capacity).state;
+      float soc = id(battery_soc).state;
+      float design = id(design_capacity).state;
+      ESP_LOGD("capacity", "Remaining calc: SOC=%.1f, Design=%.1f", soc, design);
+      if (isnan(soc) || isnan(design)) {
+        ESP_LOGW("capacity", "Remaining capacity: NAN values detected");
+        return NAN;
+      }
+      float result = (soc / 100.0f) * design;
+      ESP_LOGD("capacity", "Remaining capacity calculated: %.1f Wh", result);
+      return result;
     update_interval: 60s
     
   # Daily Energy Tracking (ESPHome calculated)
