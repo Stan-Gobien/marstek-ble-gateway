@@ -202,6 +202,18 @@ sensor:
     unit_of_measurement: "%"
     state_class: measurement
     update_interval: never
+    on_value:
+      then:
+        - sensor.template.publish:
+            id: remaining_capacity
+            state: !lambda |-
+              if (isnan(id(battery_soc).state) || isnan(id(design_capacity).state)) return NAN;
+              return (id(battery_soc).state / 100.0f) * id(design_capacity).state;
+        - sensor.template.publish:
+            id: available_capacity
+            state: !lambda |-
+              if (isnan(id(battery_soc).state) || isnan(id(design_capacity).state)) return NAN;
+              return ((100.0f - id(battery_soc).state) / 100.0f) * id(design_capacity).state;
     
   - platform: template
     name: "Battery SOH"
@@ -217,6 +229,18 @@ sensor:
     device_class: energy
     state_class: measurement
     update_interval: never
+    on_value:
+      then:
+        - sensor.template.publish:
+            id: remaining_capacity
+            state: !lambda |-
+              if (isnan(id(battery_soc).state) || isnan(id(design_capacity).state)) return NAN;
+              return (id(battery_soc).state / 100.0f) * id(design_capacity).state;
+        - sensor.template.publish:
+            id: available_capacity
+            state: !lambda |-
+              if (isnan(id(battery_soc).state) || isnan(id(design_capacity).state)) return NAN;
+              return ((100.0f - id(battery_soc).state) / 100.0f) * id(design_capacity).state;
     
   - platform: template
     name: "Available Capacity"
