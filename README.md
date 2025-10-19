@@ -45,32 +45,6 @@ packages:
   marstek_ble: github://jaapp/marstek-ble-gateway/marstek-ble-gateway.yaml@main
 ```
 
-### Setup Steps
-
-1. **Create secrets.yaml**:
-   ```yaml
-   wifi_ssid: "YourWiFiName"
-   wifi_password: "YourWiFiPassword"
-   ```
-
-2. **Configure your device**:
-   - Replace `YOUR_32_BYTE_BASE64_ENCRYPTION_KEY_HERE` with a random 32-byte base64 key
-   - Replace `YOUR_OTA_PASSWORD_HERE` with a secure password
-   - Generate encryption key with: `openssl rand -base64 32`
-
-3. **Flash to ESP32**:
-   ```bash
-   esphome run your-device.yaml
-   ```
-
-4. **Add to Home Assistant**:
-   - Go to Settings → Devices & Services
-   - Add ESPHome integration
-   - Device will auto-discover nearby Marstek devices starting with "MST"
-
-## Standalone Usage
-
-See `example.yaml` for a complete working configuration.
 
 ### 3. Features
 
