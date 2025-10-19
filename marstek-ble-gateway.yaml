@@ -106,7 +106,7 @@ ble_client:
 globals:
   - id: connection_status
     type: bool
-    initial_value: 'false'
+    initial_value: false
   - id: discovered_marstek_mac
     type: std::string
     initial_value: '"00:00:00:00:00:00"'
@@ -731,12 +731,12 @@ text_sensor:
               }
               case 0x04: { // Device Info (ASCII key=value)
                 std::string s((const char*)p, (size_t)payload_len);
-                //auto apply_kv = [&](const std::string &k, const std::string &v){
+                auto apply_kv = [&](const std::string &k, const std::string &v){
                 //  if (k == "type") id(device_type).publish_state(v);
                 //  else if (k == "id") id(device_id).publish_state(v);
                 //  else if (k == "mac") id(mac_address).publish_state(v);
                 //  else if (k == "dev_ver" || k == "fc_ver") id(firmware_version).publish_state(v);
-                //};
+                };
                 size_t start = 0;
                 while (start < s.size()) {
                   size_t comma = s.find(',', start);
@@ -789,7 +789,7 @@ text_sensor:
                   std::string state = abs(power) < 5.0 ? "inactive" : (power > 0 ? "charging" : "discharging");
                   id(battery_state).publish_state(state);
                 }
-                id(battery_temp).publish_state((float)u16(40));
+                //id(battery_temp).publish_state((float)u16(40));
                 const int base = 48;
                 const int max_cells = 16;
                 for (int i = 0; i < max_cells; i++) {
