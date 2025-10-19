@@ -44,7 +44,7 @@ esp32_ble_tracker:
 ble_client:
   - mac_address: "00:00:00:00:00:00"  # TODO: set to your MST_* device MAC
     id: marstek_venus_e
-    auto_connect: true
+    auto_connect: true  # laat ESPHome automatisch reconnecten
     on_connect:
       then:
         - lambda: |-
@@ -60,35 +60,32 @@ ble_client:
             }
         # Kick off an initial safe read burst on connect
         - delay: 1000ms
-        - ble_client.ble_write:
-            id: marstek_venus_e
-            service_uuid: '0000ff00-0000-1000-8000-00805f9b34fb'
-            characteristic_uuid: '0000ff01-0000-1000-8000-00805f9b34fb'
-            value: !lambda |-
+        - lambda: |-
+            if(id(connection_status)) {
+              // eerste frame
               std::vector<uint8_t> frame{0x73,0x00,0x23,0x04};
               frame[1] = (uint8_t)(frame.size()+1);
               uint8_t x=0; for(auto c:frame) x^=c; frame.push_back(x);
-              return frame;
+              id(marstek_venus_e).ble_write('0000ff00-0000-1000-8000-00805f9b34fb', '0000ff01-0000-1000-8000-00805f9b34fb', frame);
+            }
         - delay: 1000ms
-        - ble_client.ble_write:
-            id: marstek_venus_e
-            service_uuid: '0000ff00-0000-1000-8000-00805f9b34fb'
-            characteristic_uuid: '0000ff01-0000-1000-8000-00805f9b34fb'
-            value: !lambda |-
+        - lambda: |-
+            if(id(connection_status)) {
+              // tweede frame
               std::vector<uint8_t> frame{0x73,0x00,0x23,0x03};
               frame[1] = (uint8_t)(frame.size()+1);
               uint8_t x=0; for(auto c:frame) x^=c; frame.push_back(x);
-              return frame;
+              id(marstek_venus_e).ble_write('0000ff00-0000-1000-8000-00805f9b34fb', '0000ff01-0000-1000-8000-00805f9b34fb', frame);
+            }
         - delay: 1000ms
-        - ble_client.ble_write:
-            id: marstek_venus_e
-            service_uuid: '0000ff00-0000-1000-8000-00805f9b34fb'
-            characteristic_uuid: '0000ff01-0000-1000-8000-00805f9b34fb'
-            value: !lambda |-
+        - lambda: |-
+            if(id(connection_status)) {
+              // derde frame
               std::vector<uint8_t> frame{0x73,0x00,0x23,0x14};
               frame[1] = (uint8_t)(frame.size()+1);
               uint8_t x=0; for(auto c:frame) x^=c; frame.push_back(x);
-              return frame;
+              id(marstek_venus_e).ble_write('0000ff00-0000-1000-8000-00805f9b34fb', '0000ff01-0000-1000-8000-00805f9b34fb', frame);
+            }
     on_disconnect:
       then:
         - lambda: |-
