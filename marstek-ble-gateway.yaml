@@ -7,13 +7,13 @@
 #
 # Usage:
 # packages:
-#   marstek_ble: github://jaapp/marstek-ble-gateway/marstek-ble-gateway.yaml@main
+#   marstek_ble: github://Stan-Gobien/marstek-ble-gateway/marstek-ble-gateway.yaml@main
 
 esp32_ble_tracker:
   scan_parameters:
     active: true
-    interval: 320ms
-    window: 30ms
+    interval: 1000ms
+    window: 100ms
   on_ble_advertise:
     - then:
         - lambda: |-
@@ -59,7 +59,7 @@ ble_client:
               id(ble_last_event).publish_state("Connected");
             }
         # Kick off an initial safe read burst on connect
-        - delay: 300ms
+        - delay: 1000ms
         - ble_client.ble_write:
             id: marstek_venus_e
             service_uuid: '0000ff00-0000-1000-8000-00805f9b34fb'
@@ -69,7 +69,7 @@ ble_client:
               frame[1] = (uint8_t)(frame.size()+1);
               uint8_t x=0; for(auto c:frame) x^=c; frame.push_back(x);
               return frame;
-        - delay: 300ms
+        - delay: 1000ms
         - ble_client.ble_write:
             id: marstek_venus_e
             service_uuid: '0000ff00-0000-1000-8000-00805f9b34fb'
@@ -79,7 +79,7 @@ ble_client:
               frame[1] = (uint8_t)(frame.size()+1);
               uint8_t x=0; for(auto c:frame) x^=c; frame.push_back(x);
               return frame;
-        - delay: 300ms
+        - delay: 1000ms
         - ble_client.ble_write:
             id: marstek_venus_e
             service_uuid: '0000ff00-0000-1000-8000-00805f9b34fb'
