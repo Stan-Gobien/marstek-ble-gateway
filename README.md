@@ -42,7 +42,7 @@ time:
 
 # Import the Marstek BLE Gateway package
 packages:
-  marstek_ble: github://jaapp/marstek-ble-gateway/marstek-ble-gateway.yaml@main
+  marstek_ble: github://Stan-Gobien/marstek-ble-gateway/marstek-ble-gateway.yaml@main
 ```
 
 
