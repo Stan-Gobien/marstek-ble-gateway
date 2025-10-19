@@ -142,12 +142,12 @@ sensor:
     # update_interval: never
 
   # System data (0x0D)
-  # - platform: template
-    # name: "System Status"
-    # id: system_status
-    # state_class: measurement
-    # entity_category: diagnostic
-    # update_interval: never
+   - platform: template
+     name: "System Status"
+     id: system_status
+     state_class: measurement
+     entity_category: diagnostic
+     update_interval: never
 
   # - platform: template
     # name: "System Value 1"
