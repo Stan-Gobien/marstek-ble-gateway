@@ -764,11 +764,11 @@ text_sensor:
               }
               case 0x0D: { // System Data - publish raw words
                 id(system_status).publish_state(u8(0));
-                id(system_value_1).publish_state(u16(1));
-                id(system_value_2).publish_state(u16(3));
-                id(system_value_3).publish_state(u16(5));
-                id(system_value_4).publish_state(u16(7));
-                id(system_value_5).publish_state(u16(9));
+                //id(system_value_1).publish_state(u16(1));
+                //id(system_value_2).publish_state(u16(3));
+                //(system_value_3).publish_state(u16(5));
+                //(system_value_4).publish_state(u16(7));
+                //(system_value_5).publish_state(u16(9));
                 break;
               }
               case 0x14: { // BMS Data
